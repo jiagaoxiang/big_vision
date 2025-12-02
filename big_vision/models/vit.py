@@ -56,6 +56,10 @@ def get_posemb(self, typ, seqshape, width, name, dtype=jnp.float32):
     raise ValueError(f"Unknown posemb type: {typ}")
 
 
+<<<<<<< HEAD
+=======
+
+>>>>>>> 330ec7929a2489bc50ba0f325b0e096100c37eb3
 class MultiHeadDotProductAttention(nn.Module):
   num_heads: int
   dtype: Optional[any] = None
@@ -80,16 +84,25 @@ class MultiHeadDotProductAttention(nn.Module):
     # q = q.reshape(q.shape[:-1] + (self.num_heads, head_dim))
     # k = k.reshape(k.shape[:-1] + (self.num_heads, head_dim))
     # v = v.reshape(v.shape[:-1] + (self.num_heads, head_dim))
+<<<<<<< HEAD
     te_mask_type = 'padding' if mask is not None else 'no_mask'
+=======
+
+>>>>>>> 330ec7929a2489bc50ba0f325b0e096100c37eb3
     attn = DotProductAttention(
         head_dim=head_dim,
         num_attention_heads=self.num_heads, num_gqa_groups=self.num_heads,
         attention_dropout=self.dropout_rate,
         dtype=self.dtype,
+<<<<<<< HEAD
         qkv_layout='bshd_bshd_bshd',
         attn_mask_type=te_mask_type,
         transpose_batch_sequence=False,
     )(q, k, v, mask=(~mask if mask is not None else None), deterministic=deterministic)
+=======
+        qkv_layout='bshd_bshd_bshd'
+    )(q, k, v, mask=mask, deterministic=deterministic)
+>>>>>>> 330ec7929a2489bc50ba0f325b0e096100c37eb3
 
     # attn = attn.reshape(attn.shape[:-2] + (dim,))
     out = nn.DenseGeneral(dim, axis=(-2, -1), kernel_init=self.kernel_init, dtype=self.dtype, name='out')(attn)
