@@ -48,6 +48,7 @@ import jax.numpy as jnp
 import ml_collections
 import numpy as np
 import orbax.checkpoint
+from transformer_engine.jax.flax.transformer import DotProductAttention
 
 
 def get_config(variant):
@@ -281,6 +282,18 @@ class Attention(nn.Module):
         shape=(self.num_heads, self.head_dim, self.features),
         w_init=trunc_norm_init(in_axis=(0, 1), out_axis=(2,), batch_axis=()),
     )
+    
+    self.te_attn = DotProductAttention(
+        head_dim=self.head_dim,
+        num_attention_heads=self.num_heads,
+        num_gqa_groups=self.num_kv_heads,
+        attention_dropout=0.0,
+        attn_mask_type='padding',
+        transpose_batch_sequence=False,
+        float32_logits=True,
+        scale_factor=1.0,
+        dtype=jnp.float32,
+    )
 
   @nn.compact
   def __call__(self, x, positions, attn_mask, decode, deterministic=True):
@@ -306,29 +319,17 @@ class Attention(nn.Module):
                               cache_size=attn_mask.shape[-1],
                               cache_dtype=self.cache_dtype)
 
-    q = einops.rearrange(q, "B T (K G) H -> B T K G H", K=self.num_kv_heads)
-    logits = jnp.einsum("BTKGH,BSKH->BKGTS", q, k)
-    logits = logits.astype(jnp.float32)
-
-    if self.attn_logits_softcap:
-      logits = jnp.tanh(logits / self.attn_logits_softcap)
-      logits = logits * self.attn_logits_softcap
-
-    if attn_mask.shape != (q.shape[0], 1, q.shape[1], k.shape[1]):
-      raise ValueError(
-          f"Attention mask with shape {attn_mask.shape} but shapes for q and k "
-          f"are: {q.shape} and {k.shape}"
-      )
-
-    # big_neg = jnp.finfo(logits.dtype).min
-    big_neg = -2.3819763e38  # See gemma/modules.py
-    masked_logits = jnp.where(attn_mask[:, :, None, :, :], logits, big_neg)
-
-    probs = jax.nn.softmax(masked_logits, axis=-1).astype(k.dtype)
-
-    encoded = jnp.einsum("BKGTS,BSKH->BTKGH", probs, v)
-    encoded = einops.rearrange(encoded, "B T K G H -> B T (K G) H")
-    attn_output = self.attn_vec_einsum("BTNH,NHD->BTD", encoded)
+    # Use DotProductAttention from TransformerEngine
+    # Invert mask because TE uses True for masked out values
+    te_mask = ~attn_mask.astype(bool)
+    
+    attn_output = self.te_attn(
+        q, k, v,
+        mask=te_mask,
+        deterministic=deterministic
+    )
+    
+    attn_output = self.attn_vec_einsum("BTNH,NHD->BTD", attn_output)
 
     return attn_output
 
