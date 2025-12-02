@@ -70,11 +70,11 @@ def _decode_with_logp(
     train_state, batch, *, model, devices, max_decode_len, eos_token,
     best_of_n=1, sampler="greedy", eos_look_behind=0):
   """Sample token continuations to the input sequences."""
-  mesh = jax.sharding.Mesh(devices, ("devices",))
+  mesh = jax.sharding.Mesh(devices, ("data",))
   replicate_sharding = jax.sharding.NamedSharding(mesh, P())
   bs_shardable = len(batch["image"]) % jax.device_count() == 0
   out_sharding = jax.sharding.NamedSharding(
-      mesh, P("devices") if bs_shardable else P()
+      mesh, P("data") if bs_shardable else P()
   )
 
   # Prefill the model cache and generate logits for first token.
@@ -315,11 +315,11 @@ def _beam_decode(train_state, batch, *,
                  model, devices, max_decode_len,
                  eos_token, beam_size):
   """Beam search (greedy/top-k exploration)."""
-  mesh = jax.sharding.Mesh(devices, ("devices",))
+  mesh = jax.sharding.Mesh(devices, ("data",))
   replicate_sharding = jax.sharding.NamedSharding(mesh, P())
   bs_shardable = len(batch["image"]) % jax.device_count() == 0
   out_sharding = jax.sharding.NamedSharding(
-      mesh, P("devices") if bs_shardable else P()
+      mesh, P("data") if bs_shardable else P()
   )
 
   # Prefill the model cache and generate logits for first token.
