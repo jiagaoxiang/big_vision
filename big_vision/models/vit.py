@@ -29,6 +29,8 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 import scipy.ndimage
+import functools
+from transformer_engine.jax.flax.transformer import DotProductAttention
 
 
 def posemb_sincos_2d(h, w, width, temperature=10_000., dtype=jnp.float32):
@@ -52,6 +54,46 @@ def get_posemb(self, typ, seqshape, width, name, dtype=jnp.float32):
     return posemb_sincos_2d(*seqshape, width, dtype=dtype)
   else:
     raise ValueError(f"Unknown posemb type: {typ}")
+
+
+class MultiHeadDotProductAttention(nn.Module):
+  num_heads: int
+  dtype: Optional[any] = None
+  kernel_init: any = nn.initializers.xavier_uniform()
+  deterministic: Optional[bool] = None
+  dropout_rate: float = 0.0
+
+  @nn.compact
+  def __call__(self, inputs_q, inputs_kv, mask=None, deterministic=None):
+    if deterministic is None:
+      deterministic = self.deterministic
+      if deterministic is None:
+        deterministic = False
+
+    dim = inputs_q.shape[-1]
+    head_dim = dim // self.num_heads
+
+    q = nn.DenseGeneral((self.num_heads, head_dim), kernel_init=self.kernel_init, dtype=self.dtype, name='query')(inputs_q)
+    k = nn.DenseGeneral((self.num_heads, head_dim), kernel_init=self.kernel_init, dtype=self.dtype, name='key')(inputs_kv)
+    v = nn.DenseGeneral((self.num_heads, head_dim), kernel_init=self.kernel_init, dtype=self.dtype, name='value')(inputs_kv)
+
+    # q = q.reshape(q.shape[:-1] + (self.num_heads, head_dim))
+    # k = k.reshape(k.shape[:-1] + (self.num_heads, head_dim))
+    # v = v.reshape(v.shape[:-1] + (self.num_heads, head_dim))
+    te_mask_type = 'padding' if mask is not None else 'no_mask'
+    attn = DotProductAttention(
+        head_dim=head_dim,
+        num_attention_heads=self.num_heads, num_gqa_groups=self.num_heads,
+        attention_dropout=self.dropout_rate,
+        dtype=self.dtype,
+        qkv_layout='bshd_bshd_bshd',
+        attn_mask_type=te_mask_type,
+        transpose_batch_sequence=False,
+    )(q, k, v, mask=(~mask if mask is not None else None), deterministic=deterministic)
+
+    # attn = attn.reshape(attn.shape[:-2] + (dim,))
+    out = nn.DenseGeneral(dim, axis=(-2, -1), kernel_init=self.kernel_init, dtype=self.dtype, name='out')(attn)
+    return out
 
 
 class MlpBlock(nn.Module):
@@ -90,7 +132,7 @@ class Encoder1DBlock(nn.Module):
     out = {}
     x = nn.with_logical_constraint(x, ("act_batch", "act_len", "act_emb"))
     y = nn.LayerNorm()(x)
-    y = out["sa"] = nn.MultiHeadDotProductAttention(
+    y = out["sa"] = MultiHeadDotProductAttention(
         num_heads=self.num_heads,
         kernel_init=nn.initializers.xavier_uniform(),
         deterministic=deterministic,
@@ -173,7 +215,7 @@ class MAPHead(nn.Module):
                        (1, 1, d), x.dtype)
     probe = jnp.tile(probe, [n, 1, 1])
 
-    x = nn.MultiHeadDotProductAttention(
+    x = MultiHeadDotProductAttention(
         num_heads=self.num_heads,
         kernel_init=nn.initializers.xavier_uniform())(probe, x)
 
