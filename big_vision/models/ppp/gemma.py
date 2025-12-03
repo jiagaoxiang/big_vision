@@ -48,6 +48,7 @@ import jax.numpy as jnp
 import ml_collections
 import numpy as np
 import orbax.checkpoint
+from transformer_engine.jax.flax.transformer import DotProductAttention
 
 
 def get_config(variant):
@@ -281,6 +282,18 @@ class Attention(nn.Module):
         shape=(self.num_heads, self.head_dim, self.features),
         w_init=trunc_norm_init(in_axis=(0, 1), out_axis=(2,), batch_axis=()),
     )
+    
+    self.te_attn = DotProductAttention(
+        head_dim=self.head_dim,
+        num_attention_heads=self.num_heads,
+        num_gqa_groups=self.num_kv_heads,
+        attention_dropout=0.0,
+        attn_mask_type='padding',
+        transpose_batch_sequence=False,
+        float32_logits=True,
+        scale_factor=1.0,
+        dtype=jnp.float32,
+    )
 
   @nn.compact
   def __call__(self, x, positions, attn_mask, decode, deterministic=True):
@@ -306,11 +319,14 @@ class Attention(nn.Module):
                               cache_size=attn_mask.shape[-1],
                               cache_dtype=self.cache_dtype)
 
-    # Use jax.nn.dot_product_attention
-    attn_output = jax.nn.dot_product_attention(
+    # Use DotProductAttention from TransformerEngine
+    # Invert mask because TE uses True for masked out values
+    te_mask = ~attn_mask.astype(bool)
+    
+    attn_output = self.te_attn(
         q, k, v,
-        mask=attn_mask.astype(bool),
-        scale=1.0
+        mask=te_mask,
+        deterministic=deterministic
     )
     
     attn_output = self.attn_vec_einsum("BTNH,NHD->BTD", attn_output)
